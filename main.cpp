@@ -17,6 +17,13 @@ struct notes{
     int lane = 1;
 };
 vector<notes> notev;
+bool playS = 1;
+
+struct tapeff{
+    bool active = false;   // 该轨道是否正在显示特效
+    long double life = 0;  // 剩余显示时间
+};
+tapeff tapev[4];           // 每个轨道至多一个特效
 
 int main(){
     SetTraceLogLevel(LOG_ERROR);
@@ -24,6 +31,11 @@ int main(){
     SetTargetFPS(60);
     Texture2D notet = LoadTexture("assets/textures/note.png");
     Texture2D Dline = LoadTexture("assets/textures/Dline.png");
+    Texture2D taped = LoadTexture("assets/textures/taped.png");
+
+    InitAudioDevice();
+    Sound ding = { 0 };
+    if(FileExists("assets/sounds/ding.wav")) ding = LoadSound("assets/sounds/ding.wav");
 
     long double noteset = 0.5;
     long double noted = 0.0019531;
@@ -55,6 +67,7 @@ int main(){
         }
 
         const int keyList[4] = { KEY_D, KEY_F, KEY_J, KEY_K };
+        if(IsKeyPressed(KEY_S)) playS = !playS;   // 按 S 键切换音效开关
         for(int lane = 1; lane <= 4; lane++){
             if(IsKeyPressed(keyList[lane - 1])){   // 仅按下瞬间触发，长按不会连续命中
                 int best = -1;
@@ -65,10 +78,22 @@ int main(){
                     long double dtAbs = fabsl(toLine);
                     if(dtAbs < bestDt){ bestDt = dtAbs; best = i; }
                 }
-                if(best >= 0) notev.erase(notev.begin() + best); // 每次按键至多删除一个note
+                if(best >= 0){
+                    notev.erase(notev.begin() + best); // 每次按键至多删除一个note
+                    tapev[lane - 1].active = true;     // 显示击中特效，若该轨道已有则覆盖（相当于删除原来那个）
+                    tapev[lane - 1].life = 0.5;
+                    if(playS) PlaySound(ding);         // 显示特效的同时，playS 为 1 则播放音效
+                }
             }
         }
 
+
+        for(int i = 0;i < 4;i++){          // 特效剩余时间递减，归零后删除
+            if(tapev[i].active){
+                tapev[i].life -= dt;
+                if(tapev[i].life <= 0) tapev[i].active = false;
+            }
+        }
 
         BeginDrawing();
         ClearBackground(BLACK);
@@ -87,10 +112,26 @@ int main(){
             DrawTexture(notet, i.x, i.y, WHITE);
         }
 
+        for(int i = 0;i < 4;i++){          // 绘制击中特效：中心对齐判定线行的中间，透明度由1均匀降到0
+            if(tapev[i].active){
+                long double alpha = tapev[i].life / 0.5;
+                if(alpha > 1) alpha = 1;
+                if(alpha < 0) alpha = 0;
+                Color tapC = ColorAlpha(WHITE, (float)alpha);
+                int laneX = (i + 1) * 64 + 64;
+                DrawTexture(taped,
+                    laneX + notet.width / 2 - taped.width / 2,
+                    448 + Dline.height / 2 - taped.height / 2,
+                    tapC);
+            }
+        }
+
         //---
         EndBlendMode();
         EndDrawing();
     }
+    UnloadSound(ding);
+    CloseAudioDevice();
     CloseWindow();
     return 0;
 }

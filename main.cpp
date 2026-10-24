@@ -32,6 +32,8 @@ struct tapeff{
 };
 tapeff tapev[4];           // 每个轨道至多一个特效
 
+string levelSelect(const vector<string>& files);   // 关卡选择界面（在 re.cpp 中实现）
+
 int main(){
     SetTraceLogLevel(LOG_ERROR);
     InitWindow(512, 512, "gu gu ga ga!");
@@ -50,9 +52,27 @@ int main(){
     Music music = { 0 };
     bool hasMusic = false;
 
-    fileMode = FileExists("assets/level/level.cgame");
+    // 扫描 assets/level 下的所有 .cgame 谱面
+    vector<string> chartFiles;
+    FilePathList fl = LoadDirectoryFilesEx("assets/level", ".cgame", false);
+    for(unsigned int i = 0;i < fl.count;i++) chartFiles.push_back(fl.paths[i]);
+    UnloadDirectoryFiles(fl);
+    sort(chartFiles.begin(), chartFiles.end());
+
+    fileMode = !chartFiles.empty();
+    string chartPath;
+    if(chartFiles.size() == 1){
+        chartPath = chartFiles[0];                        // 只有一个谱面：直接播放
+    }else if(chartFiles.size() > 1){
+        chartPath = levelSelect(chartFiles);              // 多个谱面：显示关卡选择界面
+        if(chartPath.empty()){                            // 选择界面被关闭
+            CloseAudioDevice();
+            CloseWindow();
+            return 0;
+        }
+    }
     if(fileMode){                  // 有谱面文件：一次性读入全部note并按下落时间排序
-        ifstream fin("assets/level/level.cgame");
+        ifstream fin(chartPath);
         string line;
         while(getline(fin, line)){
             stringstream ss(line);

@@ -22,7 +22,7 @@ jobs:
 
       - name: Build
         shell: msys2 {0}
-        run: g++ main.cpp -o main.exe -Irlb/include -Lrlb/lib -lraylib -lgdi32 -lwinmm
+        run: g++ main.cpp re.cpp -o main.exe -Irlb/include -Lrlb/lib -lraylib -lgdi32 -lwinmm
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

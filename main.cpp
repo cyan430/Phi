@@ -15,9 +15,16 @@ struct notes{
     double x = 100;
     double y = -16;
     int lane = 1;
+    long double step = 0.0019531;  // 每下落1像素所需秒数（文件中的"下落速度"，默认与原版一致）
+    long double spawnMs = 0;       // 文件模式：顶部出现时间（ms，由“落到判定线的时间”换算，可为负）
 };
 vector<notes> notev;
 bool playS = 1;
+
+vector<notes> levelv;              // 文件模式：启动时一次性读入的全部note
+bool fileMode = false;             // 是否使用 level.cgame 谱面
+bool over = false;                 // 谱面是否已播放完毕
+long double overT = 0;             // OVER 画面持续时间
 
 struct tapeff{
     bool active = false;   // 该轨道是否正在显示特效
@@ -38,31 +45,80 @@ int main(){
     if(FileExists("assets/sounds/ding.wav")) ding = LoadSound("assets/sounds/ding.wav");
 
     long double noteset = 0.5;
-    long double noted = 0.0019531;
+    long double gameTime = 0;      // 自程序开始运行起经过的时间（秒）
+
+    Music music = { 0 };
+    bool hasMusic = false;
+
+    fileMode = FileExists("assets/level/level.cgame");
+    if(fileMode){                  // 有谱面文件：一次性读入全部note并按下落时间排序
+        ifstream fin("assets/level/level.cgame");
+        string line;
+        while(getline(fin, line)){
+            stringstream ss(line);
+            string first;
+            ss >> first;
+            if(first == "music"){                       // 音乐声明行：music <名称>（与谱面同目录）
+                string mname;
+                ss >> mname;
+                string mpath;
+                if(mname.find('.') == string::npos) mpath = "assets/level/" + mname + ".wav";
+                else mpath = "assets/level/" + mname;
+                if(FileExists(mpath.c_str())){
+                    music = LoadMusicStream(mpath.c_str());
+                    hasMusic = true;
+                }
+            }else{                                      // note行：轨道 判定时间(ms，落到判定线的时间) 下落速度
+                int lane;
+                long double tMs, st;
+                ss.str(line);
+                ss.clear();
+                if(ss >> lane >> tMs >> st && lane >= 1 && lane <= 4){   // 跳过非法行
+                    notes p;
+                    p.lane = lane;
+                    p.x = lane * 64 + 64;
+                    p.step = st;
+                    p.spawnMs = tMs - 464.0 * p.step * 1000.0;  // 换算成顶部出现时间（可为负=开局已在下落）
+                    levelv.push_back(p);
+                }
+            }
+        }
+        sort(levelv.begin(), levelv.end(), [](const notes& a, const notes& b){
+            return a.spawnMs < b.spawnMs;
+        });
+        if(hasMusic) PlayMusicStream(music);   // 音乐与note时间同一基准，程序开始即播放（不循环）
+    }
 
     while(!WindowShouldClose()){
 
         long double dt = GetFrameTime();
-        noteset -= dt;
-        if(noteset <= 0){
-            noteset += 0.5;
-            notes p;
-            p.lane = ran(1, 4);
-            p.x = p.lane * 64 + 64;
-            notev.push_back(p);
+        gameTime += dt;
+        if(hasMusic) UpdateMusicStream(music);   // 音乐流每帧更新（放完自动停止，不循环）
+
+        if(!fileMode){             // 没有谱面文件：维持原随机生成逻辑
+            noteset -= dt;
+            if(noteset <= 0){
+                noteset += 0.5;
+                notes p;
+                p.lane = ran(1, 4);
+                p.x = p.lane * 64 + 64;
+                notev.push_back(p);
+            }
+        }else if(!over){           // 文件模式：到达顶部出现时间后把note放进notev
+            while(!levelv.empty() && gameTime * 1000 >= levelv.front().spawnMs){
+                notes p = levelv.front();
+                p.y = -16.0 + (gameTime * 1000.0 - p.spawnMs) / 1000.0 / p.step;  // 出现时间早于开局则按已下落距离摆放
+                notev.push_back(p);
+                levelv.erase(levelv.begin());
+            }
         }
-        int dpx = 0;
-        noted -= dt;
-        while(noted <= 0){
-            dpx++;
-            noted += 0.0019531;
-        }
+
         for(int i = 0;i < notev.size();i++){
             if(notev[i].y > 550){
                 notev.erase(notev.begin() + i);
                 i--;
             }else{
-                notev[i].y += dpx;
+                notev[i].y += dt / notev[i].step;   // 每个note按自己的速度下落
             }
         }
 
@@ -74,7 +130,7 @@ int main(){
                 long double bestDt = 0.2;
                 for(int i = 0;i < notev.size();i++){
                     if(notev[i].lane != lane) continue;
-                    long double toLine = (448.0 - notev[i].y) * 0.0019531; // 剩余到线时间
+                    long double toLine = (448.0 - notev[i].y) * notev[i].step; // 剩余到线时间
                     long double dtAbs = fabsl(toLine);
                     if(dtAbs < bestDt){ bestDt = dtAbs; best = i; }
                 }
@@ -95,11 +151,18 @@ int main(){
             }
         }
 
+        // 谱面播放完毕且音乐也结束（或没有音乐）才进入OVER：音乐先完就静音等谱面，反之亦然
+        if(fileMode && !over && levelv.empty() && notev.empty() &&
+           (!hasMusic || !IsMusicStreamPlaying(music))){
+            over = true;
+            overT = 0;
+        }
+        if(over) overT += dt;
+
         BeginDrawing();
         ClearBackground(BLACK);
         BeginBlendMode(BLEND_ALPHA);
         //---
-        
         Color btmWHITE = ColorAlpha(WHITE, 0.5f);
         DrawLine(128, 0, 128, 512, btmWHITE);
         DrawLine(192, 0, 192, 512, btmWHITE);
@@ -126,10 +189,24 @@ int main(){
             }
         }
 
+        if(over){                          // 结束：先用0.2秒渐渐变暗，再闪烁三次OVER，之后常亮
+            long double fade = overT / 0.2;
+            if(fade > 1) fade = 1;
+            if(fade < 1){
+                DrawRectangle(0, 0, 512, 512, ColorAlpha(BLACK, (float)fade));  // 黑幕渐显
+            }else{
+                long double bt = overT - 0.2;                                   // 闪烁阶段
+                bool vis = true;
+                if(bt < 1.5) vis = (fmodl(bt, 0.5) < 0.25);                     // 0.25s亮/0.25s灭，共三次（2倍速）
+                if(vis) DrawText("OVER", 256 - MeasureText("OVER", 64) / 2, 256 - 32, 64, WHITE);
+            }
+        }
+
         //---
         EndBlendMode();
         EndDrawing();
     }
+    if(hasMusic) UnloadMusicStream(music);
     UnloadSound(ding);
     CloseAudioDevice();
     CloseWindow();
